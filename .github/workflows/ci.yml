@@ -32,8 +32,6 @@ jobs:
       SLACK_SIGNING_SECRET: test-signing-secret
       SLACK_APPROVAL_CHANNEL: C0TESTAPPROVAL
       SLACK_SAD_CHANNEL: C0TESTSAD
-      AIRTABLE_API_KEY: unused
-      AIRTABLE_BASE_ID: unused
       EVENTS_RSVP_SECRET: test-rsvp-secret
 
     steps:
@@ -54,3 +52,5 @@ jobs:
 
       - name: Run tests
         run: uv run pytest -v
+        env:
+          ALLOW_DB_WIPE: '1'
