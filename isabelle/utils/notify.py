@@ -23,18 +23,20 @@ def _tags(event) -> str:
     return ", ".join(t.replace("-", " ").title() for t in tags) if tags else "None"
 
 
-async def notify_event_approved(event, actor_slack_id):
+async def notify_event_approved(event, actor_slack_id, series_count=1):
     title = event.get("Title")
     leader = event.get("LeaderSlackID")
+    dates = f" ({series_count} dates)" if series_count > 1 else ""
 
     await _post(
         env.slack_approval_channel,
-        f"<@{actor_slack_id}> approved {title} for <@{leader}>.\nTags: {_tags(event)}",
+        f"<@{actor_slack_id}> approved {title}{dates} for <@{leader}>."
+        f"\nTags: {_tags(event)}",
     )
     if leader:
         await _post(
             leader,
-            f"Your event {title} has been approved by <@{actor_slack_id}>! "
+            f"Your event {title}{dates} has been approved by <@{actor_slack_id}>! "
             "Please reach out to them if you have any questions or need help.",
         )
 
@@ -42,7 +44,15 @@ async def notify_event_approved(event, actor_slack_id):
 async def notify_event_cancelled(event, actor_slack_id, reason_block, kind="cancelled"):
     title = event.get("Title")
     leader = event.get("LeaderSlackID")
-    verb = "rejected" if kind == "rejected" else "cancelled"
+    verb = {"rejected": "rejected", "withdrawn": "withdrawn"}.get(kind, "cancelled")
+
+    if kind == "withdrawn":
+        await _post(
+            env.slack_approval_channel,
+            f"<@{actor_slack_id}> withdrew their event *{title}*, "
+            "so it no longer needs reviewing.",
+        )
+        return
 
     blocks = [
         {

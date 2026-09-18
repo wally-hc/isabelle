@@ -1,9 +1,9 @@
 from contextlib import asynccontextmanager
+from datetime import datetime
 from datetime import timezone
 
 from piccolo.engine import engine_finder
 from piccolo_admin.endpoints import create_admin
-from piccolo_api.crud.endpoints import PiccoloCRUD
 from starlette.applications import Starlette
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
@@ -13,12 +13,22 @@ from starlette.responses import JSONResponse
 from isabelle.endpoints import HomeEndpoint
 from isabelle.piccolo_app import APP_CONFIG
 from isabelle.tables import Event
+from isabelle.attendance import ALL as RSVP_ALL
+from isabelle.attendance import followers_of
+from isabelle.attendance import read_rsvp_scope
+from isabelle.attendance import toggle_follower
+from isabelle.feed import events_feed
+from isabelle.tables import Series
 from slack_bolt.adapter.starlette.async_handler import AsyncSlackRequestHandler
 from isabelle.utils.slack import app 
 from isabelle.utils import rsvp_checker
 import logging
+import uuid
 import secrets
 from isabelle.utils.env import env
+from isabelle.recurrence import occurrences
+from isabelle.recurrence import to_rrule
+from isabelle.recurrence import validate_recurrence
 from isabelle.web_submission import as_rich_text, validate
 from isabelle import internal_events
 from isabelle.internal_events import MAX_PENDING_PER_SUBMITTER
@@ -71,7 +81,34 @@ async def internal_rsvp(req: Request):
         v.get("slackId") == slack_id for v in rsvp_data.values()
     )
     is_attending = in_rsvp or (slack_id in legacy_users)
-    return JSONResponse({ "attending": is_attending, "InterestCount": count })
+
+    following = False
+    scope = read_rsvp_scope(body.get("scope"))
+    series_id = event.get("SeriesID") if isinstance(event, dict) else None
+
+    if scope == RSVP_ALL and series_id:
+        series = await Series.select().where(Series.SeriesID == series_id).first()
+        if series:
+            followers, following = toggle_follower(series, slack_id)
+            if not attending:
+                followers = [f for f in followers_of(series) if f != slack_id]
+                following = False
+            await Series.update({Series.Followers: followers}).where(
+                Series.SeriesID == series_id
+            )
+
+    return JSONResponse(
+        {
+            "attending": is_attending,
+            "InterestCount": count,
+            "following": following,
+            "seriesId": series_id or None,
+        }
+    )
+class PartialSeries(Exception):
+    pass
+
+
 async def internal_create_event(req: Request):
     if not _check_internal_secret(req):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
@@ -82,6 +119,10 @@ async def internal_create_event(req: Request):
         return JSONResponse({"error": "invalid json"}, status_code=400)
 
     errors, values = validate(body, env.event_tags)
+    recurrence_errors, recurrence = validate_recurrence(
+        body.get("recurrence"), values.get("start_time")
+    )
+    errors = {**errors, **recurrence_errors}
     if errors:
         return JSONResponse(
             {"error": "invalid submission", "errors": errors}, status_code=422
@@ -118,21 +159,56 @@ async def internal_create_event(req: Request):
         )
     leader_name = leader_name or values["leader_slack_id"]
 
-    event = await env.database.create_event(
-        title=values["title"],
-        description=values["description"],
-        raw_description=as_rich_text(values["description"]),
-        start_time=values["start_time"],
-        end_time=values["end_time"],
-        leader_slack_id=values["leader_slack_id"],
-        leader_name=leader_name,
-        event_link=values["event_link"],
-        tags=values["tags"] or None,
-        rsvp_form_url=values["rsvp_form_url"],
-    )
+    dates = occurrences(values["start_time"], values["end_time"], recurrence)
+    series_id = str(uuid.uuid4()) if recurrence else None
 
-    if not event:
+    created = []
+    try:
+        async with Event._meta.db.transaction():
+            if recurrence:
+                await Series.insert(
+                    Series(
+                        SeriesID=series_id,
+                        Rule=to_rrule(recurrence),
+                        Timezone=recurrence["timezone"],
+                        AnchorStart=values["start_time"],
+                        LeaderSlackID=values["leader_slack_id"],
+                        CreatedAt=datetime.now(timezone.utc).replace(tzinfo=None),
+                    )
+                )
+
+            for start_time, end_time in dates:
+                occurrence = await env.database.create_event(
+                    title=values["title"],
+                    description=values["description"],
+                    raw_description=as_rich_text(values["description"]),
+                    start_time=start_time,
+                    end_time=end_time,
+                    leader_slack_id=values["leader_slack_id"],
+                    leader_name=leader_name,
+                    event_link=values["event_link"],
+                    tags=values["tags"] or None,
+                    rsvp_form_url=values["rsvp_form_url"],
+                    series_id=series_id,
+                )
+                if not occurrence:
+                    raise PartialSeries(start_time)
+                if series_id:
+                    await Event.update(
+                        {Event.OccurrenceStart: start_time}
+                    ).where(Event.id == occurrence.id)
+                created.append(occurrence)
+    except PartialSeries as failure:
+        logging.error("Could not create the whole series; rolled back: %s", failure)
+        return JSONResponse(
+            {"error": "could not create every date; nothing was saved"},
+            status_code=500,
+        )
+
+    if not created:
         return JSONResponse({"error": "could not create event"}, status_code=500)
+
+    event = created[0]
 
     # Best effort: the event is already stored, so a Slack outage must not turn
     # a successful submission into an error the submitter sees.
@@ -195,7 +271,22 @@ async def internal_rsvp_list(req: Request):
                 "slackDisplayName": None,
                 "rsvpedAt": None
             }
-    return JSONResponse({ "attendees": list(rsvp_data.values()), "InterestCount": event.get("InterestCount", 0) })
+    actor = (req.query_params.get("actor_slack_id") or "").strip()
+    following = False
+    series_id = event.get("SeriesID") or ""
+
+    if actor and series_id:
+        series = await Series.select().where(Series.SeriesID == series_id).first()
+        following = actor in followers_of(series)
+
+    return JSONResponse(
+        {
+            "attendees": list(rsvp_data.values()),
+            "InterestCount": event.get("InterestCount", 0),
+            "following": following,
+            "seriesId": series_id or None,
+        }
+    )
 
 engine = None
 
@@ -263,7 +354,7 @@ api = Starlette(
             ),
         ),
         Mount("/static/", StaticFiles(directory="static")),
-        Mount("/events/", PiccoloCRUD(table=Event,read_only=True,page_size=1000)),
+        Route("/events/", endpoint=events_feed, methods=["GET"]),
         Route("/slack/events",endpoint=endpoint,methods=["POST"]),
         Route("/health",endpoint=health,methods=["GET"]),
         Route("/internal/events", endpoint=internal_create_event, methods=["POST"]),

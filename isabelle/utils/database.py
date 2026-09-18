@@ -5,11 +5,12 @@ import json
 import logging
 from urllib.parse import quote
 
+from isabelle.slugs import slug_for
 from isabelle.tables import Event
 from isabelle.utils.rich_text import to_rich_text_column
 
 def get_cachet_pfp(user_id: str) -> str:
-    return f"https://cachet.dunkirk.sh/users/{user_id}/r"
+    return f"https://cachet.hackclub.com/users/{user_id}/r"
 
 
 class DatabaseService:
@@ -28,6 +29,7 @@ class DatabaseService:
         approved: bool = False,
         tags: Optional[List[str]] = None,
         rsvp_form_url: Optional[str] = None,
+        series_id: Optional[str] = None,
     ) -> Optional[Event]:
         
         raw_description_json = json.dumps({
@@ -57,7 +59,8 @@ class DatabaseService:
             AMA=False,
             Tags=tags or [],
             RSVPFormURL=rsvp_form_url,
-            Calculation=title.lower().replace(" ", "-").replace(":",""), # copied from the airtable formula
+            SeriesID=series_id,
+            Calculation=slug_for(title, start_time, series_id),
             CalendarLink=make_google_calendar_url(title=title,description=description,end=end_time,event_link=event_link,leader=leader_name,start=start_time)
         )
 
@@ -140,8 +143,11 @@ class DatabaseService:
             )
 
             if "Title" in updates:
-                title = updates["Title"] or ""
-                updates["Calculation"] = title.lower().replace(" ", "-").replace(":", "")
+                updates["Calculation"] = slug_for(
+                    updates.get("Title", event.get("Title")),
+                    start_time,
+                    event.get("SeriesID"),
+                )
 
 
         try:
@@ -281,6 +287,6 @@ def make_google_calendar_url(title, description, leader, event_link, start, end)
         "https://www.google.com/calendar/render?action=TEMPLATE"
         f"&text={quote(title)}"
         f"&details={quote(f'{description}\\nHack Club Event by {leader}')}"
-        f"&location={quote(event_link)}"
+        f"&location={quote(event_link or '')}"
         f"&dates={s}%2F{e}"
     )
