@@ -4,10 +4,12 @@ from typing import Any
 
 from slack_sdk.web.async_client import AsyncWebClient
 
+from isabelle.attendance import recipients_for
 from isabelle.reminders import due_reminder
 from isabelle.reminders import flags_to_set
 from isabelle.reminders import message_for
 from isabelle.reminders import utc_now
+from isabelle.tables import Series
 
 from .env import env
 
@@ -27,19 +29,18 @@ async def send_reminder(
             email_addr, f"{event['Title']} Reminder!", message
         )
 
-def _slack_ids_for_event(event: dict[str, Any]) -> list[str]:
-    rsvp_data: dict = event.get("RSVPData") or {} 
-    legacy: list = event.get("InterestedUsers") or []
-    ids: list[str] = []
-    seen: set[str] = set()
-    for entry in rsvp_data.values():
-        sid = entry.get("slackId")
-        if sid and sid not in seen:
-            ids.append(sid); seen.add(sid)
-    for sid in legacy:
-        if sid and sid not in seen:
-            ids.append(sid); seen.add(sid)
-    return ids
+async def _series_for(event: dict[str, Any]):
+    series_id = event.get("SeriesID")
+    if not series_id:
+        return None
+
+    return (
+        await Series.select().where(Series.SeriesID == series_id).first()
+    )
+
+
+async def _slack_ids_for_event(event: dict[str, Any]) -> list[str]:
+    return recipients_for(event, await _series_for(event))
 
 async def check_rsvps():
     logger.debug("Checking RSVPs")
@@ -53,7 +54,7 @@ async def check_rsvps():
 
         message = message_for(kind, event)
 
-        for user_id in _slack_ids_for_event(event):
+        for user_id in await _slack_ids_for_event(event):
             try:
                 await send_reminder(user_id, message, event)
             except Exception:
