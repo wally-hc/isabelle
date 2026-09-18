@@ -424,3 +424,84 @@ async def test_submission_is_allowed_with_a_hack_club_email(
 
     assert response.status_code == 201
     assert len(await Event.select().where(Event.Title == "Staff event")) == 1
+
+
+async def test_a_leader_may_withdraw_their_own_pending_event(
+    client, auth, clean_events
+):
+    event_id = await make_event(approved=False)
+
+    response = client.post(
+        f"/internal/events/{event_id}/cancel",
+        json={"actor_slack_id": LEADER},
+        headers=auth,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["cancellationType"] == "withdrawn"
+
+
+async def test_withdrawing_needs_no_reason(client, auth, clean_events):
+    event_id = await make_event(approved=False)
+
+    response = client.post(
+        f"/internal/events/{event_id}/cancel",
+        json={"actor_slack_id": LEADER},
+        headers=auth,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["cancellationReason"] is None
+
+
+async def test_a_leader_may_not_withdraw_once_it_is_live(client, auth, clean_events):
+    event_id = await make_event(approved=True)
+
+    response = client.post(
+        f"/internal/events/{event_id}/cancel",
+        json={"actor_slack_id": LEADER},
+        headers=auth,
+    )
+
+    assert response.status_code == 403
+    row = (await Event.select().where(Event.id == event_id))[0]
+    assert row["Cancelled"] is False
+
+
+async def test_a_stranger_may_not_withdraw_someone_elses(client, auth, clean_events):
+    event_id = await make_event(approved=False)
+
+    response = client.post(
+        f"/internal/events/{event_id}/cancel",
+        json={"actor_slack_id": STRANGER},
+        headers=auth,
+    )
+
+    assert response.status_code == 403
+    row = (await Event.select().where(Event.id == event_id))[0]
+    assert row["Cancelled"] is False
+
+
+async def test_a_reviewer_rejecting_still_needs_a_reason(client, auth, clean_events):
+    event_id = await make_event(approved=False)
+
+    response = client.post(
+        f"/internal/events/{event_id}/cancel",
+        json={"actor_slack_id": REVIEWER},
+        headers=auth,
+    )
+
+    assert response.status_code == 422
+    assert "reason" in response.json()["errors"]
+
+
+async def test_cancelling_a_live_event_still_needs_a_reason(client, auth, clean_events):
+    event_id = await make_event(approved=True)
+
+    response = client.post(
+        f"/internal/events/{event_id}/cancel",
+        json={"actor_slack_id": REVIEWER},
+        headers=auth,
+    )
+
+    assert response.status_code == 422

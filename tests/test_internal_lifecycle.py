@@ -72,14 +72,6 @@ class TestReviewerOnlyActions:
         )
         assert response.status_code == 403
 
-    def test_cancel_rejects_a_non_reviewer(self, client, rsvp_secret):
-        response = client.post(
-            f"/internal/events/{EVENT_ID}/cancel",
-            json={"actor_slack_id": STRANGER, "reason": "because"},
-            headers={"x-internal-secret": rsvp_secret},
-        )
-        assert response.status_code == 403
-
     def test_pending_scope_rejects_a_non_reviewer(self, client, rsvp_secret):
         response = client.get(
             "/internal/events/manage",
@@ -89,23 +81,20 @@ class TestReviewerOnlyActions:
         assert response.status_code == 403
 
 
-class TestCancelValidation:
-    def test_reason_is_required(self, client, rsvp_secret):
-        response = client.post(
-            f"/internal/events/{EVENT_ID}/cancel",
-            json={"actor_slack_id": REVIEWER},
-            headers={"x-internal-secret": rsvp_secret},
-        )
-        assert response.status_code == 422
-        assert "reason" in response.json()["errors"]
+class TestMissingEvents:
+    """Cancelling has to read the event before it can tell a reviewer from a
+    leader withdrawing their own submission, so a missing event is a 404 rather
+    than a 403. Reason and permission rules are covered against real rows in
+    test_internal_lifecycle_db.py."""
 
-    def test_a_blank_reason_is_not_a_reason(self, client, rsvp_secret):
+    @pytest.mark.parametrize("actor", [REVIEWER, STRANGER])
+    def test_cancelling_something_that_does_not_exist(self, client, rsvp_secret, actor):
         response = client.post(
             f"/internal/events/{EVENT_ID}/cancel",
-            json={"actor_slack_id": REVIEWER, "reason": "    "},
+            json={"actor_slack_id": actor, "reason": "because"},
             headers={"x-internal-secret": rsvp_secret},
         )
-        assert response.status_code == 422
+        assert response.status_code == 404
 
 
 class TestScopeValidation:
