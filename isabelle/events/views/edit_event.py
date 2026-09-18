@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 from slack_sdk.web.async_client import AsyncWebClient
 
+from isabelle.authz import can_edit_event
 from isabelle.utils.env import env
 from isabelle.utils.utils import rich_text_to_mrkdwn, rich_text_to_md
 from isabelle.utils.database import get_cachet_pfp
@@ -28,6 +29,15 @@ async def handle_edit_event_view(ack: Callable, body: dict[str, Any], client: As
         or "https://app.slack.com/huddle/T0266FRGM/C01D7AHKMPF"
     )
     rsvp_form_url = values.get("rsvp_form_url", {}).get("rsvp_form_url", {}).get("value") or None
+
+    existing = await env.database.get_event(view["private_metadata"])
+    if not existing or not can_edit_event(body["user"]["id"], existing):
+        await client.chat_postEphemeral(
+            user=body["user"]["id"],
+            channel=body["user"]["id"],
+            text="You are not authorised to edit this event.",
+        )
+        return
 
     if rsvp_form_url and (not urlparse(rsvp_form_url).scheme or not urlparse(rsvp_form_url).netloc):
         await client.chat_postEphemeral(
