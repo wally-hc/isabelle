@@ -14,8 +14,6 @@ class Environment:
         self.slack_signing_secret = os.environ.get("SLACK_SIGNING_SECRET", "unset")
         self.slack_approval_channel = os.environ.get("SLACK_APPROVAL_CHANNEL", "unset")
         self.slack_sad_channel = os.environ.get("SLACK_SAD_CHANNEL", "unset")
-        self.airtable_api_key = os.environ.get("AIRTABLE_API_KEY", "unset")
-        self.airtable_base_id = os.environ.get("AIRTABLE_BASE_ID", "unset")
         # google_username = os.environ.get("GOOGLE_USERNAME", "unset")
         # google_password = os.environ.get("GOOGLE_PASSWORD", "unset")
         self.sentry_dsn = os.environ.get("SENTRY_DSN", None)
