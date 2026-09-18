@@ -62,6 +62,7 @@ For the Slack app, here is the manifest you will need. Make sure to change the c
         "scopes": {
             "bot": [
                 "channels:history",
+                "channels:read",
                 "chat:write",
                 "chat:write.public",
                 "commands",
