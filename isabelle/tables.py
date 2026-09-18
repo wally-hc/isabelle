@@ -39,6 +39,9 @@ class Event(Table):
     RawDescription = Text(null=True)
     RawCancellation = Text(null=True)
     CancellationType = Varchar(length=16, null=True)
+    SeriesID = Varchar(length=36, null=True, index=True)
+    OccurrenceStart = Timestamp(null=True)
+    OverriddenFields = Array(base_column=Text(), default=[])
     # I'm not ready for DB relations and I think a ID's list will work
     # TODO: implement notify by email
     InterestedUsers = Array(base_column=Text(),default=[], secret=True)
@@ -54,3 +57,26 @@ class Submitter(Table):
     Note = Text(null=True)
     AddedBySlackID = Varchar(length=32, null=True)
     AddedAt = Timestamp(null=True)
+
+
+class Series(Table):
+    SeriesID = Varchar(length=36, unique=True)
+    Rule = Text()
+    Timezone = Varchar(length=64)
+    AnchorStart = Timestamp(null=True)
+    Followers = Array(base_column=Text(), default=[], secret=True)
+    LeaderSlackID = Varchar(length=32, null=True)
+    CreatedAt = Timestamp(null=True)
+
+
+class AuditEntry(Table):
+    id = UUID(primary_key=True)
+    At = Timestamp(null=True, index=True)
+    ActorSlackID = Varchar(length=32, null=True)
+    Action = Varchar(length=32)
+    EventID = Varchar(length=36, null=True)
+    SeriesID = Varchar(length=36, null=True)
+    EventTitle = Text(null=True)
+    Scope = Varchar(length=16, null=True)
+    Reason = Text(null=True)
+    Affected = SmallInt(default=1)
