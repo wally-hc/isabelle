@@ -9,9 +9,28 @@ client = AsyncWebClient(token=env.slack_bot_token)
 ZWSP = "\u200b"
 
 
+async def sad_members() -> set[str]:
+    members: set[str] = set()
+    cursor = None
+
+    while True:
+        response = await client.conversations_members(
+            channel=env.slack_sad_channel, limit=1000, cursor=cursor
+        )
+        members.update(response.get("members") or [])
+        cursor = (response.get("response_metadata") or {}).get("next_cursor")
+        if not cursor:
+            break
+
+    return members
+
+
 async def user_in_safehouse(user_id: str):
-    sad_members = (await client.conversations_members(channel=env.slack_sad_channel))["members"]
-    return user_id in sad_members
+    try:
+        return user_id in await sad_members()
+    except Exception:
+        logging.exception("Could not read the SAD channel members")
+        return False
 
 
 def parse_elements(elements):
