@@ -84,11 +84,22 @@ class TestCreatingASeries:
         assert not rows[0]["SeriesID"]
 
     async def test_a_bad_rule_creates_nothing(self, client, clean_events):
-        response = await create(client, recurrence={"frequency": "daily", "count": 3})
+        response = await create(client, recurrence={"frequency": "hourly", "count": 3})
         assert response.status_code == 422
 
         rows = await Event.select().where(Event.LeaderSlackID == LEADER)
         assert rows == []
+
+    async def test_a_daily_series_is_allowed(self, client, clean_events):
+        response = await create(client, recurrence={"frequency": "daily", "count": 3})
+        assert response.status_code == 201
+
+        rows = await Event.select(Event.StartTime).where(
+            Event.LeaderSlackID == LEADER
+        )
+        starts = sorted(row["StartTime"] for row in rows)
+        assert len(starts) == 3
+        assert {(b - a).days for a, b in zip(starts, starts[1:])} == {1}
 
     async def test_a_series_counts_as_one_pending_submission(
         self, client, clean_events
