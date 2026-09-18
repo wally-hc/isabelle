@@ -4,7 +4,9 @@ from datetime import timezone
 
 from slack_sdk.web.async_client import AsyncWebClient
 
+from isabelle.reminders import utc_now
 from isabelle.utils.env import env
+from isabelle.utils.rich_text import from_rich_text_column
 from isabelle.utils.utils import rich_text_to_mrkdwn
 from isabelle.utils.utils import user_in_safehouse
 
@@ -24,19 +26,14 @@ async def get_home(user_id: str, client: AsyncWebClient):
 
     events = await env.database.get_all_events(include_unapproved=True)
 
-    upcoming_events = [
-        event
-        for event in events
-        if event["StartTime"]
-        > datetime.now()
-    ]
+    now = utc_now()
+    dated = [e for e in events if e.get("StartTime") and e.get("EndTime")]
+
+    upcoming_events = [event for event in dated if event["StartTime"] > now]
     current_events = [
         event
-        for event in events
-        if datetime.now()
-        < event.get("EndTime")
-        and datetime.now()
-        > event["StartTime"]
+        for event in dated
+        if event["StartTime"] < now < event["EndTime"]
     ]
 
     current_events_blocks = []
@@ -52,7 +49,7 @@ async def get_home(user_id: str, client: AsyncWebClient):
             "Ends at %I:%M %p"
         )
         formatted_time = f"<!date^{int(event["EndTime"].timestamp())}^Ends at {{time}}|{fallback_time}>"
-        rich_text = json.loads(event["RawDescription"])
+        rich_text = from_rich_text_column(event["RawDescription"]) or {"elements": []}
         mrkdwn = rich_text_to_mrkdwn(rich_text["elements"])
         current_events_blocks.append(
             {
@@ -130,7 +127,7 @@ async def get_home(user_id: str, client: AsyncWebClient):
             "%A, %B %d at %I:%M %p"
         )
         formatted_time = f"<!date^{int(event["StartTime"].timestamp())}^{{date_long_pretty}} at {{time}}|{fallback_time}>"
-        rich_text = json.loads(event["RawDescription"])
+        rich_text = from_rich_text_column(event["RawDescription"]) or {"elements": []}
         mrkdwn = rich_text_to_mrkdwn(rich_text["elements"])
         upcoming_events_blocks.append(
             {
